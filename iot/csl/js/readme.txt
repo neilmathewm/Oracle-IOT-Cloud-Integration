@@ -1,0 +1,1 @@
+both build and external directories are added by Neil

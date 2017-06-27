@@ -1,0 +1,561 @@
+<html>
+<!--
+ - Copyright (c) 2015, 2016, Oracle and/or its affiliates. All rights reserved.
+ -
+ - This software is dual-licensed to you under the MIT License (MIT) and 
+ - the Universal Permissive License (UPL). See the LICENSE file in the root
+ - directory for license terms. You may choose either license, or both.
+ -
+ -->
+
+   <head>
+    <title>sample: enterprise-app</title>
+    <meta http-equiv="CACHE-CONTROL" content="NO-CACHE">
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="EnterpriseClientSample.css" type="text/css">
+    <script src="../external/forge.min.js"></script>
+    <script src="../build/modules/enterprise-library.web.js"></script>
+    <script language="JavaScript">
+
+//////////////////////////////////////////////////////////////////////////////
+// helpers
+
+function $(id) {return document.getElementById(id);}
+
+//////////////////////////////////////////////////////////////////////////////
+// ui
+
+function ui_option_clear(id) {
+    var o = $(id);
+    while (o.firstChild) {
+        o.removeChild(o.firstChild);
+    }
+}
+
+function ui_option_add(id, option) {
+    // expect option = {name:'', value:''}
+    var o = document.createElement('option');
+    o.setAttribute('name', option.name);
+    o.setAttribute('value', option.value);
+    o.text = option.name;
+    $(id).appendChild(o);
+}
+
+function show(shown, hidden) {
+    document.getElementById(shown).style.display='block';
+    document.getElementById(hidden).style.display='none';
+    return false;
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// iotcs ecl app
+
+var ec = null;
+var devices = [];
+var jsonTS = {
+    "urn": "urn:com:oracle:iot:device:temperature_sensor",
+    "checkbox": "checkTS",
+    "selectList": "devicesTS",
+    "tableName": "Temperature Sensors",
+    "tableId": "tableTS",
+    "columns": {
+        "deviceID": {
+            "header": "Device ID",
+            "index": 0,
+            "field": "text"
+        },
+        "temp": {
+            "header": "Current Value",
+            "index": 1,
+            "field": "text"
+        },
+        "startTime": {
+            "header": "System Last On",
+            "index": 2,
+            "field": "text"
+        },
+        "ALERT1": {
+            "header": "Alerts",
+            "index": 3,
+            "field": "text"
+        },
+        "minTemp": {
+            "header": "Minimum Value",
+            "index": 4,
+            "field": "text"
+        },
+        "maxTemp": {
+            "header": "Maximum Value",
+            "index": 5,
+            "field": "text"
+        },
+        "reset": {
+            "header": "Reset Values",
+            "index": 6,
+            "field": "action",
+            "name": "Reset"
+        },
+        "power": {
+            "header": "System Power",
+            "index": 7,
+            "field": "actionPower"
+        },
+        "minThreshold": {
+            "header": "Minimum Threshold",
+            "index": 8,
+            "field": "input"
+        },
+        "maxThreshold": {
+            "header": "Maximum Threshold",
+            "index": 9,
+            "field": "input"
+        },
+        "unit": {
+            "header": "Scale",
+            "index": 10,
+            "field": "text"
+        }
+    }
+};
+var jsonHS = {
+    "urn": "urn:com:oracle:iot:device:humidity_sensor",
+    "checkbox": "checkHS",
+    "selectList": "devicesHS",
+    "tableName": "Humidity Sensors",
+    "tableId": "tableHS",
+    "columns": {
+        "deviceID": {
+            "header": "Device ID",
+            "index": 0,
+            "field": "text"
+        },
+        "humidity": {
+            "header": "Current Value",
+            "index": 1,
+            "field": "text"
+        },
+        "ALERT1": {
+            "header": "Alerts",
+            "index": 2,
+            "field": "text"
+        },
+        "maxThreshold": {
+            "header": "Maximum Threshold",
+            "index": 3,
+            "field": "input"
+        }
+    }
+};
+var actionsLogSelector = $('actionsLog');
+
+// --> Page 1 (Load available Apps)
+function apps_refresh() {
+    ui_option_clear('apps');
+    var appPageable = iotcs.enterprise.EnterpriseClient.getApplications();
+
+    appPageable.page('first', 200).then(function(response){
+        if(response.items){
+            response.items.forEach(function(item){
+                ui_option_add('apps', {'name':item.name, 'value':item.name});
+            });
+        }
+    });
+}
+
+// Page 1 --> Page 2 (Load Device Models / Apps)
+function apps_select() {
+    var checkTSSelector = $('checkTS');
+    checkTSSelector.checked = false;
+    checkTSSelector.disabled = true;
+    var checkHSSelector = $('checkHS');
+    checkHSSelector.checked = false;
+    checkHSSelector.disabled = true;
+
+    var appSelector = $('apps');
+    var appSelected = appSelector[appSelector.selectedIndex].value;
+    $('appSelected2').innerHTML = appSelected;
+    $('appSelected3').innerHTML = appSelected;
+    $('appSelected4').innerHTML = appSelected;
+
+    iotcs.enterprise.EnterpriseClient.newClient(appSelected, function (client) {
+
+        ec = client;
+
+        ec.getDeviceModels().page('first').then(function (response) {
+            if (response.items) {
+                response.items.forEach(function (item) {
+                    switch (item.urn) {
+                        case jsonTS.urn:
+                            $(jsonTS.checkbox).disabled = false;
+                            $(jsonTS.checkbox).value = JSON.stringify(item);
+                            break;
+                        case jsonHS.urn:
+                            $(jsonHS.checkbox).disabled = false;
+                            $(jsonHS.checkbox).value = JSON.stringify(item);
+                            break;
+                    }
+                });
+            }
+        });
+    });
+}
+
+// Page 2 --> Page 3 (Load Monitor Devices / Device Models / Apps)
+function devicemodels_select() {
+    loadActiveDevices(jsonTS);
+    loadActiveDevices(jsonHS);
+}
+
+function loadActiveDevices(jsonTable) {
+    ui_option_clear(jsonTable.selectList);
+
+    if ($(jsonTable.checkbox).checked) {
+        ec.getActiveDevices(jsonTable.urn).page('first', 200).then(function(response){
+            if(response.items){
+                response.items.forEach(function(item){
+                    ui_option_add(jsonTable.selectList, {'name':item.id, 'value':JSON.stringify(item)});
+                });
+            }
+        });
+    }
+}
+
+// Page 3 --> Page 4 (Monitor Devices)
+function monitor_devices() {
+    createTable(jsonTS);
+    createTable(jsonHS);
+    monitorModelDevices(jsonTS);
+    monitorModelDevices(jsonHS);
+}
+
+function createTable(jsonTable) {
+    var divTables = $('tables');
+    divTables.appendChild(document.createElement("br"));
+    divTables.appendChild(document.createTextNode(jsonTable.tableName));
+
+    var table = document.createElement('TABLE');
+    table.setAttribute("id", jsonTable.tableId);
+
+    var tableBody = document.createElement('TBODY');
+    table.appendChild(tableBody);
+
+    var tr = document.createElement('TR');
+    tableBody.appendChild(tr);
+
+    for (var column in jsonTable.columns) {
+        var td = document.createElement('TH');
+        td.appendChild(document.createTextNode(jsonTable.columns[column].header));
+        tr.appendChild(td);
+    }
+
+    divTables.appendChild(table);
+}
+
+function appendRow(jsonTable, devId) {
+    var tbl = document.getElementById(jsonTable.tableId);
+    var row = tbl.insertRow(tbl.rows.length);
+    row.setAttribute("id", jsonTable.tableId + devId);
+
+    for (var column in jsonTable.columns) {
+        var cell = row.insertCell(jsonTable.columns[column].index);
+        switch (jsonTable.columns[column].field) {
+            case 'input':
+                var child = document.createElement("INPUT");
+                child.setAttribute("type", "number");
+                child.setAttribute("name", column);
+                cell.appendChild(child);
+                child.value = devices[jsonTable.tableId + devId][column].value;
+                updateAttributeOnInput(devId, child, jsonTable);
+                break;
+            case 'action':
+                var child = document.createElement("BUTTON");
+                child.innerHTML = jsonTable.columns[column].name;
+                cell.appendChild(child);
+                executeAction(devId, child, column, jsonTable);
+                break;
+            case 'actionPower':
+                var childOn = document.createElement("BUTTON");
+                childOn.innerHTML = "On";
+                childOn.className = "powerOn";
+                cell.appendChild(childOn);
+
+                var childOff = document.createElement("BUTTON");
+                childOff.innerHTML = "Off";
+                childOff.className = "powerOff";
+                cell.appendChild(childOff);
+
+                executePowerOnOff(devId, childOn, childOff, column, jsonTable);
+                break;
+            default:
+                if (devices[jsonTable.tableId + devId][column]) {
+                    cell.innerHTML = devices[jsonTable.tableId + devId][column].value;
+                }
+                break;
+        }
+    }
+    row.cells[0].innerHTML = devId;
+}
+
+function updateAttributeOnInput(devId, attribute, jsonTable) {
+    var virtualDevId = jsonTable.tableId + devId;
+    var modified = false;
+    attribute.addEventListener("blur", function(e) {
+        if (modified) {
+            try {
+                devices[virtualDevId][e.target.name].value = parseInt(e.target.value);
+                modified = false;
+            } catch (err) {
+                alert(err.toString());
+                e.target.value = devices[virtualDevId][e.target.name].value;
+            }
+
+        }
+    });
+    attribute.addEventListener("change", function(e) {
+        modified = true;
+    });
+}
+
+function executeAction(devId, button, action, jsonTable) {
+    var virtualDevId = jsonTable.tableId + devId;
+
+    devices[virtualDevId][action].onExecute = function(response){
+        var log = (new Date).toLocaleTimeString('en-US') + ":  Action <u>" + escapeHtml(action) + "</u> was executed for device " + escapeHtml(devId);
+        actionsLogSelector.innerHTML = log + ". Result: " + getResultStatusString(response) + "<br>" + actionsLogSelector.innerHTML;
+    };
+
+    button.addEventListener("click", function(e) {
+        var log = (new Date).toLocaleTimeString('en-US') + ":  Execute action <u>" + action + "</u> for device " + devId;
+        actionsLogSelector.innerHTML = log + "<br>" + actionsLogSelector.innerHTML;
+        devices[virtualDevId].call(action);
+    });
+}
+
+function executePowerOnOff(devId, buttonOn, buttonOff, action, jsonTable) {
+    var virtualDevId = jsonTable.tableId + devId;
+
+    devices[virtualDevId][action].onExecute = function(response){
+        var log = (new Date).toLocaleTimeString('en-US') + ":  Action <u>" + escapeHtml(action) + "</u> was executed for device " + escapeHtml(devId);
+        actionsLogSelector.innerHTML = log + ". Result: " + getResultStatusString(response) + "<br>" + actionsLogSelector.innerHTML;
+    };
+
+    buttonOn.addEventListener("click", function(e) {
+        var log = (new Date).toLocaleTimeString('en-US') + ":  Execute action <u>" + action + " On</u> for device " + devId;
+        actionsLogSelector.innerHTML = log + "<br>" + actionsLogSelector.innerHTML;
+        devices[virtualDevId].call(action, true);
+    });
+
+    buttonOff.addEventListener("click", function(e) {
+        var log = (new Date).toLocaleTimeString('en-US') + ":  Execute action <u>" + action + " Off</u> for device " + devId;
+        actionsLogSelector.innerHTML = log + "<br>" + actionsLogSelector.innerHTML;
+        devices[virtualDevId].call(action, false);
+    });
+}
+
+function escapeHtml(str) {
+    return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;")
+            .replace(/\//g, "&#x2F;")
+}
+
+function getResultStatusString(response){
+    if (response.response
+        && response.response.statusCode && (typeof response.response.statusCode === 'number')) {
+        if ((response.response.statusCode < 300) && (response.response.statusCode > 199)) {
+            return 'SUCCESS';
+        } else {
+            return ('FAILED with code ' + response.response.statusCode);
+        }
+    } else if (response.status && (typeof response.status === 'string')) {
+        return escapeHtml(response.status);
+    } else {
+        return 'COMPLETED with code unknown';
+    }
+}
+
+function updateCell(jsonTable, tupples){
+    tupples.forEach(function (tupple) {
+        var row = $(jsonTable.tableId + tupple.attribute.device.getEndpointId());
+        var column = tupple.attribute.id;
+        var newContent = tupple.newValue;
+
+        if (tupple.attribute.type === "NUMBER") {
+            newContent = Math.trunc(newContent);
+        }
+        if (tupple.attribute.type === "DATETIME") {
+            newContent = newContent.toUTCString();
+        }
+
+        if (jsonTable.columns[column].field === 'input') {
+            row.cells[jsonTable.columns[column].index].childNodes[0].value = newContent;
+        } else {
+            row.cells[jsonTable.columns[column].index].innerHTML = newContent;
+        }
+
+        var cell = row.cells[jsonTable.columns[column].index];
+
+        cell.className = "highlightCell";
+        setTimeout(function () {
+            cell.className = "normalCell";
+        }, 400);
+    });
+}
+
+function monitorModelDevices(jsonTable) {
+    try {
+        var selModel = JSON.parse($(jsonTable.checkbox).value);
+
+        for (var i = 0, len = $(jsonTable.selectList).length; i < len; i++) {
+            var opt = $(jsonTable.selectList)[i];
+            if (opt.selected) {
+                var devId = JSON.parse(opt.value).id;
+                monitorDevice(devId, selModel, jsonTable);
+            }
+        }
+    } catch (e) {
+
+    }
+}
+
+function monitorDevice(devId, selModel, jsonTable) {
+    var virtualDevId = jsonTable.tableId + devId;
+    devices[virtualDevId] = new iotcs.enterprise.VirtualDevice(devId, selModel, ec);
+    appendRow(jsonTable, devId);
+
+    devices[virtualDevId].onChange = function (tupple) {
+        updateCell(jsonTable, tupple);
+    };
+
+    devices[virtualDevId].onError = function (tupple) {
+        for (var key in tupple.attributes) {
+            var singleTupple = {
+                attribute: tupple.attributes[key],
+                newValue: tupple.newValues[key]
+            };
+            updateCell(jsonTable, [singleTupple]);
+        }
+    };
+
+    devices[virtualDevId].onAlerts = function (alertsObject) {
+        for (var formatUrn in alertsObject) {
+            for (var key in alertsObject[formatUrn].fields) {
+                var cell = $(jsonTable.tableId + devId).cells[jsonTable.columns[key].index];
+                cell.innerHTML = alertsObject[formatUrn].fields[key];
+                cell.className = "highlightCell";
+                setTimeout(function () {
+                    cell.className = "normalCell";
+                }, 400);
+            }
+            var alertString = formatUrn.substring(formatUrn.lastIndexOf(':')+1);
+            var cell = $(jsonTable.tableId + devId).cells[jsonTable.columns["ALERT1"].index];
+            cell.innerHTML = alertString;
+            if (alertString === 'too_cold') {
+                cell.className = "highlightAlertCell_tooCold";
+            } else {
+                cell.className = "highlightAlertCell";
+            }
+            setTimeout(function() {cell.className = "normalAlertCell";}, 1500);
+        }
+    };
+}
+
+function load() {
+    iotcs.oracle.iot.client.test.auth.activated = $('checkTest').checked;
+    iotcs.oracle.iot.client.serverUrl = $('serverUrl').value;
+    apps_refresh();
+}
+
+//////////////////////////////////////////////////////////////////////////////
+
+  </script>
+  </head>
+
+  <body>
+  <div align="center" style="width:640px;min-height:100%;background:whitesmoke">
+
+  <div id="Page1">
+      <p>Page 1</p><br>
+      <h2>IoT Application</h2>
+      <h3>Enterprise Client Software Sample</h3><br>
+
+      IOT Server URL: <input type="text" id="serverUrl"/><br>
+
+      <input type="checkbox" id="checkTest"> Test Server<br>
+
+      <p>Enter the URL to the IOT server in the form of:<br>
+          https://[hostname]:[port]</p><br>
+
+      <button onclick="load(); return show('Page2','Page1');">Next</button>
+  </div>
+
+  <div id="Page2" style="display:none">
+      <p>Page 2</p><br>
+      <h2>Enterprise Client Loaded</h2>
+      <h3>Applications:</h3><br><br>
+
+      <select id="apps"></select><br>
+
+      <p>Select the name of the IoT Application<br>
+          for witch you want to monitor devices</p><br>
+      <button onclick="apps_select(); return show('Page3','Page2');">Next</button>
+  </div>
+
+  <div id="Page3" style="display:none">
+      <p>Page 3</p><br>
+      <h2>Device Models</h2>
+      <h3>IoT Application: <span id="appSelected2"></span></h3><br><br>
+
+      <input type="checkbox" id="checkTS" disabled>Temperature sensor<br>
+      <input type="checkbox" id="checkHS" disabled>Humidity sensor<br>
+
+      <p>Select the type of the devices you want<br>
+          to monitor for this IoT Application</p><br>
+      <button onclick="return show('Page1','Page2');">Back</button>
+      <button onclick="devicemodels_select(); return show('Page4','Page3');">Next</button>
+  </div>
+
+  <div id="Page4" style="display:none">
+      <p>Page 4</p><br>
+      <h2>Monitor Devices</h2>
+      <h3>IoT Application: <span id="appSelected3"></span></h3><br><br>
+
+      <div class="wrapper">
+        <div class="margins">&nbsp;</div>
+          <div class="center">
+            <p>Temperature<br>Sensors</p>
+            <select class="devicesSelector" multiple id="devicesTS"></select>
+          </div>
+          <div class="center">
+              <p>Humidity<br>Sensors</p>
+            <select class="devicesSelector" multiple id="devicesHS"></select>
+          </div>
+        <div class="margins">&nbsp;</div>
+      </div>
+
+      <br>
+      <p>Select the devices you would like to monitor<br>
+          for this IoT Application. Press Shift while<br>
+          selecting the devices.</p><br>
+      <button onclick="return show('Page2','Page3');">Back</button>
+      <button onclick="monitor_devices(); return show('Page5','Page4');">Next</button>
+  </div>
+
+  <div id="Page5" style="display:none;width:1024px;min-height:100%;background:whitesmoke">
+      <p>Page 5</p><br>
+      <h3>IoT Application: <span id="appSelected4"></span></h3>
+
+      <div id="tables"></div><br>
+
+      <div style="width:90%;text-align:left;">
+          <h4>Execute Actions Log</h4>
+          <div id="actionsLog"></div><br>
+      </div>
+  </div>
+  </div>
+
+  </body>
+</html>
